@@ -1,0 +1,39 @@
+{
+  "name": "slack-huddle-obsidian",
+  "version": "0.1.0",
+  "description": "Save a transcript of every Slack huddle to your Obsidian vault, with a ChatGPT summary when it ends. macOS, no app to install.",
+  "type": "module",
+  "bin": {
+    "slack-huddle-obsidian": "bin/cli.mjs"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "darwin"
+  ],
+  "keywords": [
+    "slack",
+    "huddle",
+    "transcript",
+    "obsidian",
+    "meeting-notes",
+    "chatgpt",
+    "captions"
+  ],
+  "author": "Muhammad Numan <muhammadnuman70@gmail.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/numandev1/slack-huddle-obsidian.git"
+  },
+  "homepage": "https://github.com/numandev1/slack-huddle-obsidian#readme",
+  "bugs": "https://github.com/numandev1/slack-huddle-obsidian/issues",
+  "scripts": {
+    "check": "node --check bin/cli.mjs && node --check lib/watcher.mjs && node --check lib/chatgpt.mjs && node --check lib/config.mjs"
+  }
+}
