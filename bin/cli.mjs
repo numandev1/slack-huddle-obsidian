@@ -189,7 +189,8 @@ Summaries use ChatGPT in your Chrome. One more step:
   }
 
   console.log(`
-Important: in Slack → Settings → Advanced, turn OFF "Launch Slack on login".
+Important: stop Slack opening by itself at login. Right-click Slack in the Dock → Options →
+untick "Open at Login" (or remove it in System Settings → General → Login Items).
 This tool opens Slack at login itself; if Slack opens itself first, nothing gets recorded.
 If you quit Slack, reopen it with:  npx slack-huddle-obsidian restart-slack
 `);

@@ -20,7 +20,7 @@ Setup asks which vault to use, restarts Slack once, and checks that everything w
 
 Then do two things by hand:
 
-1. **In Slack → Settings → Advanced, turn off "Launch Slack on login".** This tool opens Slack at login itself, with the setting it needs.
+1. **Stop Slack opening by itself at login.** This tool opens Slack at login itself, with the setting it needs. Right-click Slack in the Dock → **Options** → untick **Open at Login**, and remove Slack from **System Settings → General → Login Items** if it's listed there. (Older Slack versions had this as "Launch Slack on login" under Slack → Settings → Advanced.)
 2. **For summaries:** in Chrome, open `chrome://inspect/#remote-debugging`, tick **Allow remote debugging for this browser instance**, and make sure you're signed in to [chatgpt.com](https://chatgpt.com). If you don't want summaries, run setup with `--no-summary`.
 
 ## Use
