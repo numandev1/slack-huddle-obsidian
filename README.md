@@ -18,6 +18,8 @@ npx github:numandev1/slack-huddle-obsidian setup
 
 Setup asks which vault to use, restarts Slack once, and checks that everything works.
 
+Slack runs on its own profile for this tool (a copy of your normal one, so you stay signed in). See [How it works](#how-it-works).
+
 Then do two things by hand:
 
 1. **Stop Slack opening by itself at login.** This tool opens Slack at login itself, with the setting it needs. Right-click Slack in the Dock → **Options** → untick **Open at Login**, and remove Slack from **System Settings → General → Login Items** if it's listed there. (Older Slack versions had this as "Launch Slack on login" under Slack → Settings → Advanced.)
@@ -56,6 +58,7 @@ Settings live in `~/.slack-huddle-obsidian/config.json`. After editing it, rerun
 ## How it works
 
 - Slack's desktop app is built on Chromium. Started with `--remote-debugging-port`, it lets a local program read its windows, the same way Chrome DevTools does. The port only listens on `127.0.0.1`.
+- Since Slack 4.53, Slack refuses to start with that setting on its normal profile. So this tool runs Slack on a separate profile, `Slack-huddle`, next to the normal one (inside Slack's container for the App Store version). The first time, it copies your normal profile there, minus caches, so you stay signed in. After that the two profiles are separate: if you open Slack from the Dock, you get the old profile and nothing is recorded. To use a different folder, set `slackUserDataDir` in `config.json` and rerun `setup -y`.
 - A background script (a LaunchAgent) watches for a huddle, turns on **Show captions → Side-by-side**, and copies each caption line and its speaker into the note.
 - When the huddle ends, it opens a small ChatGPT window in your Chrome, sends the transcript with the summary prompt, saves the answer and closes the window.
 
@@ -63,7 +66,7 @@ Settings live in `~/.slack-huddle-obsidian/config.json`. After editing it, rerun
 
 - **macOS only.**
 - **Caption quality is Slack's.** Set the huddle language in Slack to match the language spoken. If two people share a room without headphones, lines may come out duplicated.
-- **Slack updates can break it** if they rename the caption elements. It's tested on Slack 4.52, and `doctor` warns when your version is different. Please open an issue if notes stop appearing.
+- **Slack updates can break it** if they rename the caption elements. It's tested on Slack 4.53, and `doctor` warns when your version is different. Please open an issue if notes stop appearing.
 - **Tell people you're keeping notes.** Everyone in the huddle sees captions are on, but saving them is your responsibility.
 
 ## Troubleshooting
@@ -71,6 +74,8 @@ Settings live in `~/.slack-huddle-obsidian/config.json`. After editing it, rerun
 | Symptom | Fix |
 |---|---|
 | No notes at all | Run `doctor`. Usually Slack was opened from the Dock, so run `restart-slack`. |
+| Slack opens and closes straight away, or setup says "Slack did not open its debug port" | You're on Slack 4.53+ with an older version of this tool. Rerun `setup`. |
+| Slack asks you to sign in again | The tool's profile couldn't be copied from your normal one. Sign in once; it's remembered after that. |
 | Transcript saved, summary failed | The notification says why. Usually Chrome is closed, remote debugging is off, or you're signed out of ChatGPT. |
 | "No captions were captured" | Captions couldn't be turned on. Turn them on by hand: huddle **⋯ → Show captions → Side-by-side**. |
 

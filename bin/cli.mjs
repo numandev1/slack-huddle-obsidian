@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // slack-huddle-obsidian: installs, checks and removes the Slack huddle → Obsidian watcher.
 // Everything lives in ~/.slack-huddle-obsidian plus two LaunchAgents; nothing goes in /Applications.
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, rmSync, readdirSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, rmSync, readdirSync } from 'node:fs';
+import { join, dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline/promises';
@@ -17,7 +17,7 @@ const WATCHER_LABEL = 'io.github.numandev1.slack-huddle-obsidian';
 const SLACK_LABEL = 'io.github.numandev1.slack-huddle-obsidian.launch-slack';
 const OBSIDIAN_CONFIG = join(HOME, 'Library/Application Support/obsidian/obsidian.json');
 const SLACK_APP = '/Applications/Slack.app';
-const TESTED_SLACK = '4.52';
+const TESTED_SLACK = '4.53';
 const UID = process.getuid();
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -96,8 +96,14 @@ function loadAgent(label, body) {
   mkdirSync(AGENTS_DIR, { recursive: true });
   run('launchctl', ['bootout', `gui/${UID}/${label}`]);
   writeFileSync(file, body);
-  const r = run('launchctl', ['bootstrap', `gui/${UID}`, file]);
-  if (r.status !== 0) throw new Error(`launchctl could not load ${label}: ${r.stderr.trim()}`);
+  // bootout returns before the old job is gone, and bootstrapping too soon fails with "5: Input/output error"
+  let r;
+  for (let i = 0; i < 20; i++) {
+    r = run('launchctl', ['bootstrap', `gui/${UID}`, file]);
+    if (r.status === 0) return;
+    run('sleep', ['0.25']);
+  }
+  throw new Error(`launchctl could not load ${label}: ${r.stderr.trim()}`);
 }
 
 function unloadAgent(label) {
@@ -108,18 +114,42 @@ function unloadAgent(label) {
 const agentRunning = label => /state = running/.test(run('launchctl', ['print', `gui/${UID}/${label}`]).stdout || '');
 const slackRunning = () => run('pgrep', ['-x', 'Slack']).status === 0;
 
+// Slack 4.53+ refuses to start with --remote-debugging-port on its default profile
+// ("requires --user-data-dir pointing outside the default profile"), so the tool runs Slack
+// on its own profile. The App Store build is sandboxed and can only use folders inside its container.
+const SLACK_CONTAINER = join(HOME, 'Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support');
+const defaultSlackProfile = () => existsSync(join(SLACK_APP, 'Contents/_MASReceipt'))
+  ? join(SLACK_CONTAINER, 'Slack')
+  : join(HOME, 'Library/Application Support/Slack');
+const slackProfile = config => config.slackUserDataDir || join(dirname(defaultSlackProfile()), 'Slack-huddle');
+const slackArgs = config => ['--args', `--remote-debugging-port=${config.port}`, `--user-data-dir=${slackProfile(config)}`];
+
+// Seeds the tool's profile with a copy of the normal one so you stay signed in. Only runs once, with Slack
+// quit, because copying a live profile can catch its cookie and LevelDB files half-written.
+const CACHE_DIRS = new Set(['Cache', 'Code Cache', 'GPUCache', 'DawnCache', 'GraphiteDawnCache', 'DawnGraphiteCache', 'DawnWebGPUCache', 'GPUPersistentCache', 'CacheStorage', 'logs']);
+function ensureSlackProfile(config) {
+  const dir = slackProfile(config);
+  if (existsSync(dir)) return 'exists';
+  const source = defaultSlackProfile();
+  if (!existsSync(source)) { mkdirSync(dir, { recursive: true }); return 'empty'; }
+  cpSync(source, dir, { recursive: true, filter: f => !CACHE_DIRS.has(basename(f)) && !basename(f).startsWith('Singleton') && basename(f) !== 'DevToolsActivePort' });
+  return 'copied';
+}
+
 async function slackPortUp(port) {
   try { return (await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1500) })).ok; }
   catch { return false; }
 }
 
-async function restartSlack(port) {
+async function restartSlack(config) {
   if (slackRunning()) {
     run('osascript', ['-e', 'quit app "Slack"']);
     for (let i = 0; i < 40 && slackRunning(); i++) await sleep(250);
+    if (slackRunning()) { warn('Slack did not quit. Quit it yourself and run restart-slack again.'); return false; }
   }
-  run('open', ['-a', 'Slack', '--args', `--remote-debugging-port=${port}`]);
-  for (let i = 0; i < 60; i++) { if (await slackPortUp(port)) return true; await sleep(500); }
+  if (ensureSlackProfile(config) === 'empty') warn(`No Slack profile to copy, so sign in to Slack once in the window that opens.`);
+  run('open', ['-a', 'Slack', ...slackArgs(config)]);
+  for (let i = 0; i < 60; i++) { if (await slackPortUp(config.port)) return true; await sleep(500); }
   return false;
 }
 
@@ -164,17 +194,18 @@ async function setup(flags) {
   <key>StandardOutPath</key><string>${LOG_FILE}</string>
   <key>StandardErrorPath</key><string>${LOG_FILE}</string>`));
   // only loaded for future logins: bootstrapping it now would `open` Slack straight away
-  writeFileSync(join(AGENTS_DIR, `${SLACK_LABEL}.plist`), plist(SLACK_LABEL, ['/usr/bin/open', '-a', 'Slack', '--args', `--remote-debugging-port=${config.port}`]));
+  writeFileSync(join(AGENTS_DIR, `${SLACK_LABEL}.plist`), plist(SLACK_LABEL, ['/usr/bin/open', '-a', 'Slack', ...slackArgs(config)]));
   run('launchctl', ['bootout', `gui/${UID}/${SLACK_LABEL}`]);
   run('launchctl', ['enable', `gui/${UID}/${SLACK_LABEL}`]);
 
   console.log(`\nInstalled v${PKG.version}. Transcripts → ${join(vaultPath, config.meetingsFolder)}`);
 
+  if (!slackRunning()) ensureSlackProfile(config); // the login launcher needs it even if Slack isn't started now
   if (!(await slackPortUp(config.port))) {
     const why = slackRunning() ? 'Slack is open without the debug port, so it needs a restart.' : 'Slack is not running.';
     if (await confirm(`${why} (Re)start Slack now?`, flags)) {
       console.log('Restarting Slack…');
-      if (!(await restartSlack(config.port))) warn('Slack did not open its debug port. Run `npx slack-huddle-obsidian doctor`.');
+      if (!(await restartSlack(config))) warn('Slack did not open its debug port. Run `npx slack-huddle-obsidian doctor`.');
     }
   }
 
@@ -206,7 +237,12 @@ async function doctor() {
 
   existsSync(config.vaultPath) ? ok(`Vault: ${config.vaultPath}`) : fail(`Vault folder is missing: ${config.vaultPath}`);
   agentRunning(WATCHER_LABEL) ? ok('Watcher is running') : fail('Watcher is not running (rerun setup)');
-  existsSync(join(AGENTS_DIR, `${SLACK_LABEL}.plist`)) ? ok('Slack opens with the debug port at login') : fail('Slack login launcher is missing (rerun setup)');
+  const launcher = join(AGENTS_DIR, `${SLACK_LABEL}.plist`);
+  if (!existsSync(launcher)) fail('Slack login launcher is missing (rerun setup)');
+  else if (!readFileSync(launcher, 'utf8').includes('--user-data-dir=')) fail('Slack login launcher is from an older version and Slack 4.53+ will refuse it (rerun setup)');
+  else ok('Slack opens with the debug port at login');
+  existsSync(slackProfile(config)) ? ok(`Slack profile for the tool: ${slackProfile(config)}`)
+    : warn('The tool\'s Slack profile does not exist yet (restart-slack creates it from your normal one)');
 
   if (existsSync(SLACK_APP)) {
     const version = run('defaults', ['read', `${SLACK_APP}/Contents/Info`, 'CFBundleShortVersionString']).stdout.trim();
@@ -268,8 +304,8 @@ try {
   else if (command === 'setup' || command === 'install') await setup(flags);
   else if (command === 'doctor') process.exitCode = (await doctor()) ? 0 : 1;
   else if (command === 'restart-slack') {
-    const { port } = loadConfig();
-    console.log(await restartSlack(port) ? `Slack is open with debug port ${port}.` : 'Slack did not open its debug port.');
+    const config = loadConfig();
+    console.log(await restartSlack(config) ? `Slack is open with debug port ${config.port}.` : 'Slack did not open its debug port. Run doctor.');
   }
   else if (command === 'logs') execFileSync('tail', ['-n', '40', '-f', LOG_FILE], { stdio: 'inherit' });
   else if (command === 'uninstall') uninstall(flags);
